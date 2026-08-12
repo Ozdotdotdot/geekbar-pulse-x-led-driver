@@ -92,6 +92,30 @@ static const uint8_t BOTH_CONSTELLATIONS_DEPTH[] = {
 static const size_t BOTH_CONSTELLATIONS_TREE_LEN =
     sizeof(BOTH_CONSTELLATIONS_TREE) / sizeof(BOTH_CONSTELLATIONS_TREE[0]);
 
+// The ring around the center X icon, in physical clockwise order starting
+// near the top -- confirmed against led_map.json centroid angles (30 sits
+// at ~12 degrees from straight up, angle increases monotonically clockwise
+// through 59 at ~347 degrees, so this is already the correct sweep order
+// with no reordering needed).
+static const uint8_t RING[] = {
+    30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 56, 57, 58, 59,
+};
+static const size_t RING_LEN = sizeof(RING) / sizeof(RING[0]);
+
+// Seven-segment digit slots. Each array is ordered
+// [top, upperLeft, upperRight, middle, lowerLeft, lowerRight, bottom],
+// derived from the original device's battery-percentage readout
+// ("100" split into two clusters, each a leading "1" plus two full
+// digits). The bottom cluster's indices are exactly +40 from the top
+// cluster's, confirmed independently by geometry in led_map.json (not
+// assumed from the offset alone).
+static const uint8_t DIGIT_TOP_A[] = {0, 5, 1, 6, 4, 2, 3};
+static const uint8_t DIGIT_TOP_B[] = {8, 13, 9, 14, 12, 10, 11};
+static const uint8_t DIGIT_BOTTOM_A[] = {40, 45, 41, 46, 44, 42, 43};
+static const uint8_t DIGIT_BOTTOM_B[] = {48, 53, 49, 54, 52, 50, 51};
+static const uint8_t DIGIT_TOP_ONE[] = {7, 15};
+static const uint8_t DIGIT_BOTTOM_ONE[] = {47, 55};
+
 // Every remaining LED that isn't part of a constellation path, a digit
 // cluster (0-15, 40-55), the ring/X icon (16-39, 56-59), the lightning
 // bolt icon (74, 76), the juice-drop icon (60, 61, 112, 113), or a

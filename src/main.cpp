@@ -138,6 +138,33 @@ void lightGroup(const uint8_t *indices, size_t count, uint8_t brightness) {
     show();
 }
 
+// Standard 7-segment truth table, one bit per position in a digit slot
+// array ([top, upperLeft, upperRight, middle, lowerLeft, lowerRight,
+// bottom], bit 0 = top .. bit 6 = bottom).
+static const uint8_t SEVEN_SEG_BITS[10] = {
+    119,  // 0: top,upperLeft,upperRight,lowerLeft,lowerRight,bottom
+    36,   // 1: upperRight,lowerRight
+    93,   // 2: top,upperRight,middle,lowerLeft,bottom
+    109,  // 3: top,upperRight,middle,lowerRight,bottom
+    46,   // 4: upperLeft,upperRight,middle,lowerRight
+    107,  // 5: top,upperLeft,middle,lowerRight,bottom
+    123,  // 6: top,upperLeft,middle,lowerLeft,lowerRight,bottom
+    37,   // 7: top,upperRight,lowerRight
+    127,  // 8: all
+    111,  // 9: top,upperLeft,upperRight,middle,lowerRight,bottom
+};
+
+// Lights the segments for a single digit (0-9) in a 7-index slot array,
+// without clearing -- caller clears first so multiple slots (e.g. all
+// four digits of a clock face) can be composed into one frame.
+void renderDigit(const uint8_t *segMap, uint8_t digitValue, uint8_t brightness) {
+    if (digitValue > 9) return;
+    uint8_t bits = SEVEN_SEG_BITS[digitValue];
+    for (int i = 0; i < 7; i++) {
+        if (bits & (1 << i)) setPixel(segMap[i], brightness);
+    }
+}
+
 // Animates a traveling light along a path of LED indices: for each
 // consecutive pair, the first node ramps from full brightness to off while
 // the second ramps from off to full, over `stepsPerTransition` steps. Runs
@@ -194,6 +221,76 @@ uint8_t treeMaxDepth(const uint8_t *depths, size_t count) {
 // brightness ramps read as a breathing curve rather than a linear fade.
 float easeInOutSine(float t) {
     return -(cosf((float)M_PI * t) - 1.0f) / 2.0f;
+}
+
+// Progress-fill a ring (or any flat, non-branching path): each LED eases
+// in and stays lit as we move through the list in order, so it reads as a
+// pie-chart-style progress indicator filling clockwise.
+void ringFill(const uint8_t *ring, size_t count, int subSteps, int stepDelayMs,
+              uint8_t peakBrightness) {
+    clearAll();
+    for (size_t i = 0; i < count; i++) {
+        for (int s = 0; s <= subSteps; s++) {
+            uint8_t b = (uint8_t)(peakBrightness * easeInOutSine((float)s / subSteps));
+            setPixel(ring[i], b);
+            show();
+            delay(stepDelayMs);
+        }
+    }
+}
+
+// Radar/second-hand style sweep around a ring: a bright leading LED with
+// an exponentially decaying tail trailing behind it, going around `laps`
+// times. `decayPercent` is how much brightness the tail keeps per LED
+// step back (lower = shorter, snappier tail).
+void ringSweep(const uint8_t *ring, size_t count, int stepDelayMs, uint8_t peakBrightness,
+               uint8_t decayPercent, int laps) {
+    int totalSteps = (int)count * laps;
+    float decay = decayPercent / 100.0f;
+    for (int step = 0; step < totalSteps; step++) {
+        clearAll();
+        float b = peakBrightness;
+        for (int t = 0; t < (int)count; t++) {
+            uint8_t bi = (uint8_t)b;
+            if (bi == 0) break;
+            int idx = ((step - t) % (int)count + (int)count) % (int)count;
+            setPixel(ring[idx], bi);
+            b *= decay;
+        }
+        show();
+        delay(stepDelayMs);
+    }
+    clearAll();
+    show();
+}
+
+// Instant, non-blocking ring progress set: lights the first `filledCount`
+// ring LEDs solid and turns the rest off, in a single frame -- no
+// animation, no delay() loop. Only touches the ring's own indices, so
+// whatever else is already in frame[] (a clock face, a background
+// twinkle) is left alone. Meant to be called repeatedly by a host-side
+// timer/clock driving its own timing, since the on-device animation
+// commands (I/S/etc.) block the whole board for their duration and can't
+// be interrupted -- fine for a few seconds, not for an hour-long timer.
+void setRingProgress(const uint8_t *ring, size_t count, size_t filledCount, uint8_t brightness) {
+    if (filledCount > count) filledCount = count;
+    for (size_t i = 0; i < count; i++) {
+        setPixel(ring[i], i < filledCount ? brightness : 0);
+    }
+    show();
+}
+
+// Hard step blink (no easing, full on/off cut) across a whole group,
+// `times` times -- meant to grab attention, e.g. a timer finishing.
+void hardBlink(const uint8_t *nodes, size_t count, int times, int onMs, int offMs) {
+    for (int i = 0; i < times; i++) {
+        for (size_t j = 0; j < count; j++) setPixel(nodes[j], 0xFF);
+        show();
+        delay(onMs);
+        clearAll();
+        show();
+        delay(offMs);
+    }
 }
 
 // One directional sweep through depth levels `fromDepth` -> `toDepth`
@@ -672,6 +769,23 @@ void forEachInt(const String &str, Fn fn) {
 //                                   "constellation_right", or
 //                                   "both_constellations") stays lit
 //                                   solidly at <staticB>
+//   "I <subSteps> <ms> <brightness>" -> ring progress-fill, clockwise from
+//                                   LED 30, single pass, each LED eases in
+//                                   and stays lit
+//   "S <ms> <brightness> <decayPercent> <laps>" -> ring radar/second-hand
+//                                   sweep, a bright LED with a decaying
+//                                   tail going around <laps> times
+//   "J <filledCount> <brightness>" -> instant, non-blocking ring progress
+//                                   set (0-14 filled), for a host-driven
+//                                   timer ticking its own pace
+//   "H <times> <onMs> <offMs> <group>" -> hard step blink (no easing,
+//                                   full on/off cut), <group> "all" or
+//                                   "ring" -- e.g. a timer finishing
+//   "D <brightness> <topA> <topB> <bottomA> <bottomB>" -> render a digit
+//                                   0-9 (or "X" for blank) in each of the
+//                                   four 7-segment slots at once, like a
+//                                   clock face reading topA topB : bottomA
+//                                   bottomB
 //   "K <minB> <maxB> <group>"   -> arm a background twinkle ("stray_stars"
 //                                   or "all") that keeps flickering under
 //                                   whatever W/R/Y/Z/B animation runs next
@@ -922,6 +1036,91 @@ void loop() {
                              BOTH_CONSTELLATIONS_TREE_LEN, steps, delayMs, flashOnMs, flashOffMs,
                              (uint8_t)peakBrightness);
             }
+            Serial.println("OK");
+        } else if (line.startsWith("I ")) {
+            // "I <subSteps> <ms> <brightness>" -- ring progress-fill,
+            // clockwise, single pass
+            String rest = line.substring(2);
+            rest.trim();
+            int sp1 = rest.indexOf(' ');
+            int subSteps = rest.substring(0, sp1).toInt();
+            String r2 = rest.substring(sp1 + 1);
+            int sp2 = r2.indexOf(' ');
+            int delayMs = r2.substring(0, sp2).toInt();
+            int brightness = r2.substring(sp2 + 1).toInt();
+            ringFill(RING, RING_LEN, subSteps, delayMs, (uint8_t)brightness);
+            Serial.println("OK");
+        } else if (line.startsWith("S ")) {
+            // "S <ms> <brightness> <decayPercent> <laps>" -- ring
+            // radar/second-hand sweep with a decaying tail
+            String rest = line.substring(2);
+            rest.trim();
+            int sp1 = rest.indexOf(' ');
+            int delayMs = rest.substring(0, sp1).toInt();
+            String r2 = rest.substring(sp1 + 1);
+            int sp2 = r2.indexOf(' ');
+            int brightness = r2.substring(0, sp2).toInt();
+            String r3 = r2.substring(sp2 + 1);
+            int sp3 = r3.indexOf(' ');
+            int decayPercent = r3.substring(0, sp3).toInt();
+            int laps = r3.substring(sp3 + 1).toInt();
+            ringSweep(RING, RING_LEN, delayMs, (uint8_t)brightness, (uint8_t)decayPercent, laps);
+            Serial.println("OK");
+        } else if (line.startsWith("J ")) {
+            // "J <filledCount> <brightness>" -- instant, non-blocking ring
+            // progress set (0-14 filled), for host-driven timers
+            String rest = line.substring(2);
+            rest.trim();
+            int sp1 = rest.indexOf(' ');
+            int filledCount = rest.substring(0, sp1).toInt();
+            int brightness = rest.substring(sp1 + 1).toInt();
+            setRingProgress(RING, RING_LEN, (size_t)filledCount, (uint8_t)brightness);
+            Serial.println("OK");
+        } else if (line.startsWith("H ")) {
+            // "H <times> <onMs> <offMs> <group>" -- hard step blink (no
+            // easing) to grab attention, e.g. a timer finishing
+            String rest = line.substring(2);
+            rest.trim();
+            int sp1 = rest.indexOf(' ');
+            int times = rest.substring(0, sp1).toInt();
+            String r2 = rest.substring(sp1 + 1);
+            int sp2 = r2.indexOf(' ');
+            int onMs = r2.substring(0, sp2).toInt();
+            String r3 = r2.substring(sp2 + 1);
+            int sp3 = r3.indexOf(' ');
+            int offMs = r3.substring(0, sp3).toInt();
+            String groupName = r3.substring(sp3 + 1);
+            if (groupName == "all") {
+                hardBlink(ALL_LEDS, ALL_LEDS_LEN, times, onMs, offMs);
+            } else if (groupName == "ring") {
+                hardBlink(RING, RING_LEN, times, onMs, offMs);
+            }
+            Serial.println("OK");
+        } else if (line.startsWith("D ")) {
+            // "D <brightness> <topA> <topB> <bottomA> <bottomB>" -- each
+            // digit slot is 0-9 or "X" to leave blank; renders all four at
+            // once like a clock face (topA topB : bottomA bottomB)
+            String rest = line.substring(2);
+            rest.trim();
+            int sp1 = rest.indexOf(' ');
+            uint8_t brightness = (uint8_t)rest.substring(0, sp1).toInt();
+            String r2 = rest.substring(sp1 + 1);
+            int sp2 = r2.indexOf(' ');
+            String vTopA = r2.substring(0, sp2);
+            String r3 = r2.substring(sp2 + 1);
+            int sp3 = r3.indexOf(' ');
+            String vTopB = r3.substring(0, sp3);
+            String r4 = r3.substring(sp3 + 1);
+            int sp4 = r4.indexOf(' ');
+            String vBottomA = r4.substring(0, sp4);
+            String vBottomB = r4.substring(sp4 + 1);
+
+            clearAll();
+            if (vTopA != "X") renderDigit(DIGIT_TOP_A, (uint8_t)vTopA.toInt(), brightness);
+            if (vTopB != "X") renderDigit(DIGIT_TOP_B, (uint8_t)vTopB.toInt(), brightness);
+            if (vBottomA != "X") renderDigit(DIGIT_BOTTOM_A, (uint8_t)vBottomA.toInt(), brightness);
+            if (vBottomB != "X") renderDigit(DIGIT_BOTTOM_B, (uint8_t)vBottomB.toInt(), brightness);
+            show();
             Serial.println("OK");
         } else if (line == "K off") {
             disarmBackgroundTwinkle();
