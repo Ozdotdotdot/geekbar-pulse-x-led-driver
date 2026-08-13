@@ -7,7 +7,11 @@ package serialport
 import (
 	"bufio"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"go.bug.st/serial"
@@ -26,9 +30,40 @@ func Open(name string, baud int) (*Port, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", name, err)
 	}
+	markCloseOnExec(name)
 	time.Sleep(2 * time.Second)
 	sp.ResetInputBuffer()
 	return &Port{port: sp, reader: bufio.NewReader(sp)}, nil
+}
+
+// markCloseOnExec finds the fd go.bug.st/serial just opened for name (it
+// doesn't set O_CLOEXEC itself) and marks it close-on-exec. Without this,
+// every "mpc ..." subprocess the daemon forks inherits the raw serial fd,
+// including the long-lived "mpc idle player" watcher -- which then pins the
+// old fd open across a suspend/resume cycle, so the daemon's post-resume
+// reopen fails with "device busy" even though it closed its own handle.
+func markCloseOnExec(name string) {
+	target, err := filepath.EvalSymlinks(name)
+	if err != nil {
+		target = name
+	}
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		fd, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		link, err := os.Readlink(filepath.Join("/proc/self/fd", e.Name()))
+		if err != nil {
+			continue
+		}
+		if link == target || link == name {
+			syscall.CloseOnExec(fd)
+		}
+	}
 }
 
 func (p *Port) Close() error {

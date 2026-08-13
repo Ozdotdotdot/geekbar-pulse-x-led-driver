@@ -45,7 +45,8 @@ type Daemon struct {
 
 	sleeping bool
 
-	cmds chan cmdRequest
+	cmds    chan cmdRequest
+	resumed chan *Panel
 }
 
 func New(portName string, baud int, socketPath string) (*Daemon, error) {
@@ -62,6 +63,7 @@ func New(portName string, baud int, socketPath string) (*Daemon, error) {
 		lastRenderedClockKey: -1,
 		lastRenderedHour:     -1,
 		cmds:                 make(chan cmdRequest),
+		resumed:              make(chan *Panel),
 	}, nil
 }
 
@@ -111,6 +113,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case req := <-d.cmds:
 			d.handleCommand(req)
 			d.tick(time.Now())
+		case panel := <-d.resumed:
+			d.panel = panel
+			d.sleeping = false
+			d.lastMode = modeUnset
+			d.musicSub = musicSubNone
+			d.lastRenderedClockKey = -1
+			d.lastRenderedHour = -1
+			d.tick(time.Now())
 		}
 	}
 }
@@ -138,19 +148,32 @@ func (d *Daemon) handleResume() {
 	log.Print("resumed: reopening serial port and redrawing")
 	// The ESP32 is USB-powered off this machine and very likely lost power
 	// (and reset) during suspend -- the old port handle and any assumed
-	// on-device state can't be trusted.
-	port, err := serialport.Open(d.portName, d.baud)
-	if err != nil {
-		log.Printf("failed to reopen serial port after resume: %v", err)
-		return
+	// on-device state can't be trusted. USB re-enumeration after resume
+	// isn't always instant, so a single failed open shouldn't leave the
+	// daemon permanently stuck thinking it's still asleep -- retry for a
+	// while in the background instead of giving up after one attempt.
+	go d.reopenAfterResume()
+}
+
+func (d *Daemon) reopenAfterResume() {
+	const (
+		retryInterval = 2 * time.Second
+		giveUpAfter   = 60 * time.Second
+	)
+	deadline := time.Now().Add(giveUpAfter)
+	for {
+		port, err := serialport.Open(d.portName, d.baud)
+		if err == nil {
+			d.resumed <- NewPanel(port)
+			return
+		}
+		if time.Now().After(deadline) {
+			log.Printf("giving up reopening serial port after resume: %v", err)
+			return
+		}
+		log.Printf("serial port not ready after resume, retrying: %v", err)
+		time.Sleep(retryInterval)
 	}
-	d.panel = NewPanel(port)
-	d.sleeping = false
-	d.lastMode = modeUnset
-	d.musicSub = musicSubNone
-	d.lastRenderedClockKey = -1
-	d.lastRenderedHour = -1
-	d.tick(time.Now())
 }
 
 func (d *Daemon) tick(now time.Time) {
