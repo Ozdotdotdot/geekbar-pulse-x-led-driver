@@ -182,13 +182,8 @@ Several versions of the same map, useful for different purposes:
   actual film (constellation lines drawn in, every index labeled) --
   the most legible starting point if you're orienting a physical board
   against this repo
-- `led_map_overlay.png` -- automated point-cloud schematic from
-  `map_leds.py`, no photo background
 - `led_map_on_photo.png` -- automated points overlaid on a reference
   photo
-- `led_map_dots_transparent.png` / `led_map_dots_transparent_white.png`
-  -- dots + labels only, transparent background (yellow / white ink), for
-  overlaying on your own photo
 - `led_map_dots_bw.png` -- white background, black ink, printable
 
 ## Known limitations
