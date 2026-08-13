@@ -117,13 +117,27 @@ void disarmBackgroundTwinkle() {
     bgTwinkleActive = false;
 }
 
+// Smooth ease-in-out curve (t in 0..1 -> eased fraction in 0..1); defined
+// further down but needed here too, hence the forward declaration.
+float easeInOutSine(float t);
+
+// How long a freshly-armed background twinkle takes to ease up from off to
+// its normal range, so re-arming it (e.g. on resuming playback) reads as a
+// breath fading in rather than every star popping straight to some random
+// mid-brightness phase.
+static const float BG_TWINKLE_FADE_IN_SEC = 1.2f;
+
 void show() {
     if (bgTwinkleActive) {
         float tSec = (millis() - bgTwinkleStartMs) / 1000.0f;
+        float envelope = 1.0f;
+        if (tSec < BG_TWINKLE_FADE_IN_SEC) {
+            envelope = easeInOutSine(tSec / BG_TWINKLE_FADE_IN_SEC);
+        }
         for (size_t i = 0; i < bgTwinkleCount; i++) {
             float s = sinf(tSec * bgTwinkleFreq[i] * 30.0f + bgTwinklePhase[i]);
             float norm = (s + 1.0f) * 0.5f;
-            uint8_t b = (uint8_t)(bgTwinkleMinB + norm * (bgTwinkleMaxB - bgTwinkleMinB));
+            uint8_t b = (uint8_t)((bgTwinkleMinB + norm * (bgTwinkleMaxB - bgTwinkleMinB)) * envelope);
             setPixel(bgTwinkleNodes[i], b);
         }
     }
@@ -278,6 +292,61 @@ void setRingProgress(const uint8_t *ring, size_t count, size_t filledCount, uint
         setPixel(ring[i], i < filledCount ? brightness : 0);
     }
     show();
+}
+
+// Generic non-destructive pixel set: writes each listed (index, brightness)
+// pair into frame[] and shows it, without clearing anything else already
+// resident there -- the host-side daemon uses this to compose several
+// independent things (a held constellation, clock digits, the X icon) into
+// one frame without any of them stomping on the others. Same pattern as
+// setRingProgress(), generalized to arbitrary indices instead of just the
+// ring.
+void setPixels(const uint16_t *indices, const uint8_t *brightnesses, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        setPixel(indices[i], brightnesses[i]);
+    }
+    show();
+}
+
+// Eases every LED in a group from fromBrightness to toBrightness over
+// totalMs, on-device -- lets a host smoothly dim/undim a group already held
+// lit (e.g. a constellation going dim while music is paused, then back up
+// on resume) without a full clear-and-replay animation.
+void easeGroup(const uint8_t *nodes, size_t count, uint8_t fromB, uint8_t toB, int totalMs) {
+    const int kSteps = 30;
+    int stepMs = totalMs / kSteps;
+    if (stepMs < 1) stepMs = 1;
+    for (int s = 0; s <= kSteps; s++) {
+        float t = easeInOutSine((float)s / kSteps);
+        uint8_t b = (uint8_t)(fromB + t * ((float)toB - (float)fromB));
+        for (size_t i = 0; i < count; i++) setPixel(nodes[i], b);
+        show();
+        delay(stepMs);
+    }
+}
+
+// Like easeGroup, but each LED fades from whatever brightness it's actually
+// currently at (read out of frame[], not a caller-supplied uniform value)
+// down/up to toBrightness -- for fading out a group that was mid-animation
+// (e.g. each star at a different point in its own twinkle cycle) without
+// every LED snapping to a shared starting brightness first.
+void easeGroupFromCurrent(const uint8_t *nodes, size_t count, uint8_t toB, int totalMs) {
+    static uint8_t fromB[144];
+    for (size_t i = 0; i < count && i < 144; i++) {
+        fromB[i] = frame[nodes[i]];
+    }
+    const int kSteps = 30;
+    int stepMs = totalMs / kSteps;
+    if (stepMs < 1) stepMs = 1;
+    for (int s = 0; s <= kSteps; s++) {
+        float t = easeInOutSine((float)s / kSteps);
+        for (size_t i = 0; i < count && i < 144; i++) {
+            uint8_t b = (uint8_t)(fromB[i] + t * ((float)toB - (float)fromB[i]));
+            setPixel(nodes[i], b);
+        }
+        show();
+        delay(stepMs);
+    }
 }
 
 // Hard step blink (no easing, full on/off cut) across a whole group,
@@ -790,6 +859,23 @@ void forEachInt(const String &str, Fn fn) {
 //                                   or "all") that keeps flickering under
 //                                   whatever W/R/Y/Z/B animation runs next
 //   "K off"                     -> disarm the background twinkle
+//   "E <fromB> <toB> <ms> <group>" -> ease every LED in a group from fromB
+//                                   to toB over ms, on-device, without
+//                                   clearing anything else already lit --
+//                                   for smoothly dimming/undimming a held
+//                                   group (e.g. a constellation on pause/
+//                                   resume) instead of an instant step
+//   "V <toB> <ms> <group>"      -> like "E", but each LED fades from its
+//                                   own current brightness (not a shared
+//                                   starting value) to toB -- for fading
+//                                   out a group that was mid-animation
+//                                   (e.g. twinkling stars) without every
+//                                   LED snapping to one brightness first
+//   "U <i1> <b1> <i2> <b2> ..." -> non-destructive pixel set: writes each
+//                                   (index, brightness) pair without
+//                                   clearing anything else already lit --
+//                                   for host-side compositing of several
+//                                   independent layers at once
 //   "C"                         -> clear all
 //   "A"                         -> light all LEDs
 // After handling a command the firmware prints "OK" so a host script can
@@ -827,6 +913,8 @@ void loop() {
                 lightGroup(CONSTELLATION_RIGHT, CONSTELLATION_RIGHT_LEN, brightness);
             } else if (groupName == "both_constellations") {
                 lightGroup(BOTH_CONSTELLATIONS, BOTH_CONSTELLATIONS_LEN, brightness);
+            } else if (groupName == "x_icon") {
+                lightGroup(X_ICON, X_ICON_LEN, brightness);
             }
             Serial.println("OK");
         } else if (line.startsWith("P ")) {
@@ -1177,6 +1265,83 @@ void loop() {
                                   (uint8_t)minB, (uint8_t)maxB, BOTH_CONSTELLATIONS,
                                   BOTH_CONSTELLATIONS_LEN, (uint8_t)staticBrightness);
             }
+            Serial.println("OK");
+        } else if (line.startsWith("E ")) {
+            // "E <fromB> <toB> <ms> <group>" -- ease every LED in a group
+            // from fromB to toB over ms, on-device, without clearing
+            // anything else
+            String rest = line.substring(2);
+            rest.trim();
+            int sp1 = rest.indexOf(' ');
+            int fromB = rest.substring(0, sp1).toInt();
+            String r2 = rest.substring(sp1 + 1);
+            int sp2 = r2.indexOf(' ');
+            int toB = r2.substring(0, sp2).toInt();
+            String r3 = r2.substring(sp2 + 1);
+            int sp3 = r3.indexOf(' ');
+            int ms = r3.substring(0, sp3).toInt();
+            String groupName = r3.substring(sp3 + 1);
+            if (groupName == "constellation_left") {
+                easeGroup(CONSTELLATION_LEFT, CONSTELLATION_LEFT_LEN, (uint8_t)fromB, (uint8_t)toB, ms);
+            } else if (groupName == "constellation_right") {
+                easeGroup(CONSTELLATION_RIGHT, CONSTELLATION_RIGHT_LEN, (uint8_t)fromB, (uint8_t)toB, ms);
+            } else if (groupName == "both_constellations") {
+                easeGroup(BOTH_CONSTELLATIONS, BOTH_CONSTELLATIONS_LEN, (uint8_t)fromB, (uint8_t)toB, ms);
+            } else if (groupName == "x_icon") {
+                easeGroup(X_ICON, X_ICON_LEN, (uint8_t)fromB, (uint8_t)toB, ms);
+            } else if (groupName == "stray_stars") {
+                easeGroup(STRAY_STARS, STRAY_STARS_LEN, (uint8_t)fromB, (uint8_t)toB, ms);
+            }
+            Serial.println("OK");
+        } else if (line.startsWith("V ")) {
+            // "V <toB> <ms> <group>" -- ease every LED in a group from its
+            // own current brightness down/up to toB over ms, on-device
+            String rest = line.substring(2);
+            rest.trim();
+            int sp1 = rest.indexOf(' ');
+            int toB = rest.substring(0, sp1).toInt();
+            String r2 = rest.substring(sp1 + 1);
+            int sp2 = r2.indexOf(' ');
+            int ms = r2.substring(0, sp2).toInt();
+            String groupName = r2.substring(sp2 + 1);
+            if (groupName == "constellation_left") {
+                easeGroupFromCurrent(CONSTELLATION_LEFT, CONSTELLATION_LEFT_LEN, (uint8_t)toB, ms);
+            } else if (groupName == "constellation_right") {
+                easeGroupFromCurrent(CONSTELLATION_RIGHT, CONSTELLATION_RIGHT_LEN, (uint8_t)toB, ms);
+            } else if (groupName == "both_constellations") {
+                easeGroupFromCurrent(BOTH_CONSTELLATIONS, BOTH_CONSTELLATIONS_LEN, (uint8_t)toB, ms);
+            } else if (groupName == "x_icon") {
+                easeGroupFromCurrent(X_ICON, X_ICON_LEN, (uint8_t)toB, ms);
+            } else if (groupName == "stray_stars") {
+                easeGroupFromCurrent(STRAY_STARS, STRAY_STARS_LEN, (uint8_t)toB, ms);
+            }
+            Serial.println("OK");
+        } else if (line.startsWith("U ")) {
+            // "U <i1> <b1> <i2> <b2> ..." -- non-destructive pixel set: writes
+            // each (index, brightness) pair without clearing anything else
+            // already in frame[], for host-side compositing of several
+            // independent layers (held constellation, clock digits, icons)
+            String rest = line.substring(2);
+            rest.trim();
+            static uint16_t idxBuf[144];
+            static uint8_t brightBuf[144];
+            size_t n = 0;
+            bool haveIdx = false;
+            uint16_t pendingIdx = 0;
+            forEachInt(rest, [&](long v) {
+                if (!haveIdx) {
+                    pendingIdx = (uint16_t)v;
+                    haveIdx = true;
+                } else {
+                    if (n < 144) {
+                        idxBuf[n] = pendingIdx;
+                        brightBuf[n] = (uint8_t)v;
+                        n++;
+                    }
+                    haveIdx = false;
+                }
+            });
+            setPixels(idxBuf, brightBuf, n);
             Serial.println("OK");
         } else if (line == "C") {
             clearAll();

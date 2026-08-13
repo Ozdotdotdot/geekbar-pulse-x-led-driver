@@ -92,6 +92,17 @@ static const uint8_t BOTH_CONSTELLATIONS_DEPTH[] = {
 static const size_t BOTH_CONSTELLATIONS_TREE_LEN =
     sizeof(BOTH_CONSTELLATIONS_TREE) / sizeof(BOTH_CONSTELLATIONS_TREE[0]);
 
+// The center X icon: four 3-LED arms (top-left, bottom-left, bottom-right,
+// top-right), confirmed via led_map.json centroids against the user's
+// annotated reference photo -- the cluster sits right in the middle of the
+// ring, at roughly (1081-1173, 493-568) in image space, well clear of
+// indices 28/29 which actually sit on top of the separate lightning-bolt
+// icon (74, 76) up near the top digit cluster, not part of this icon.
+static const uint8_t X_ICON[] = {
+    16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+};
+static const size_t X_ICON_LEN = sizeof(X_ICON) / sizeof(X_ICON[0]);
+
 // The ring around the center X icon, in physical clockwise order starting
 // near the top -- confirmed against led_map.json centroid angles (30 sits
 // at ~12 degrees from straight up, angle increases monotonically clockwise

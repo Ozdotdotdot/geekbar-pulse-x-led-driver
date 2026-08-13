@@ -55,6 +55,64 @@ the video/gif at the top of this README.
 .venv/bin/python3 scripts/demo.py --port /dev/ttyUSB0
 ```
 
+## Computer integration (`timerled/`)
+
+`timerled` is a small Go daemon + CLI that turns the panel into an always-on
+desk fixture reacting to the machine it's plugged into, instead of a script
+you run by hand. Only one process can hold the serial port at a time, so the
+design mirrors `mpd`/`mpc`: `timerled daemon` is a long-running process that
+owns the port and runs the state machine; every other subcommand is a thin
+client that talks to the running daemon over a Unix socket.
+
+**States**, highest priority first:
+
+- **Off** -- forced manually with `timerled off`, persists across sleep/wake
+  until `timerled normal`.
+- **Pomodoro** -- started with `timerled pomodoro <duration>` (Go's
+  `time.ParseDuration`, e.g. `timerled pomodoro 1h20m`). All decorations off,
+  single-purpose: the ring drains from full as time runs out, the clock
+  digits show remaining time (`HH:MM` above an hour left, `MM:SS` under),
+  finishes with two hard blinks across every LED.
+- **Music** -- entered automatically whenever `mpc status` reports
+  `[playing]`. Constellations paint themselves anew (the `B` trace-and-breathe
+  reveal) on every new track, stray stars twinkle in the background, the ring
+  tracks song progress, the clock digits keep ticking alongside all of it. On
+  pause the decorations clear and the center X icon lights instead; after 5
+  idle minutes it falls back to Regular.
+- **Regular** -- the default/idle state: constellations built and held,
+  background twinkle, clock digits at brightness 160, with the 5x
+  bounce-and-settle animation (`Y`) replaying on every hour.
+
+Sleep and wake are handled by subscribing directly to logind's
+`PrepareForSleep` D-Bus signal (no root scripts needed) -- the panel blanks
+before suspend and redraws after resume. Since the ESP32 is USB-powered off
+the same machine, resume also reopens the serial port rather than trusting
+the old handle, since the board very likely reset when USB power dropped.
+
+**Setup:**
+
+```
+cd timerled
+go build -o ~/.local/bin/timerled ./cmd/timerled
+cp timerled.service ~/.config/systemd/user/
+systemctl --user enable --now timerled.service
+```
+
+**CLI:**
+
+| Command | Effect |
+|---|---|
+| `timerled daemon` | run the daemon in the foreground (what the systemd unit calls) |
+| `timerled pomodoro <duration>` | start a countdown, e.g. `timerled pomodoro 25m` |
+| `timerled cancel` | cancel an active pomodoro |
+| `timerled status` | print the current mode, and time remaining if a pomodoro is active |
+| `timerled off` | force all LEDs off |
+| `timerled normal` | clear a manual off / cancel a pomodoro, resume automatic regular/music state |
+
+`internal/leds/groups.go` mirrors the digit segment maps and the X icon
+indices from `led_groups.h`/`main.cpp` -- keep them in sync if the physical
+mapping ever changes.
+
 ## Serial protocol
 
 115200 baud, one command per line, newline-terminated. The firmware
@@ -97,6 +155,7 @@ breathing motion rather than a mechanical one.
 | `N <ms> <frameMs> <minB> <maxB> <staticB> <group>` | `stray_stars` twinkle while `<group>` (a constellation, or `both_constellations`) stays lit solidly at `<staticB>` |
 | `K <minB> <maxB> <group>` | arm a background twinkle (`stray_stars` or `all`) that keeps flickering underneath whatever `W`/`R`/`Y`/`Z`/`B` animation runs next, and keeps animating on its own once idle |
 | `K off` | disarm the background twinkle |
+| `U <i1> <b1> <i2> <b2> ...` | non-destructive pixel set: writes each `(index, brightness)` pair without clearing anything else already lit -- lets a host compose several independent layers (a held constellation, clock digits, the X icon) into one frame without one erasing another |
 
 **Ring** (the 14-LED ring around the center X icon)
 
@@ -132,6 +191,8 @@ Named groups referenced by the commands above (defined in
   part of any constellation line, digit, icon, or the ring)
 - `all` -- all 144 LEDs
 - `ring` -- the 14-LED ring around the center X icon (`H` only)
+- `x_icon` -- the 4-arm X icon in the middle of the ring (`G` only; use `U`
+  to turn it on/off without clearing the rest of the frame)
 
 ## Known layout notes
 
@@ -149,6 +210,10 @@ Named groups referenced by the commands above (defined in
   starting near the top -- confirmed via centroid angle from
   `led_map.json` (LED 30 sits at ~12 degrees off vertical, angle
   increases monotonically clockwise through LED 59 at ~347 degrees).
+- **X icon**: 4 arms of 3 LEDs each (`16-27`), in the middle of the ring --
+  confirmed via `led_map.json` centroids against the user's annotated
+  reference photo. Indices `28, 29` sit nearby in image space but are
+  actually part of the separate lightning-bolt icon, not this one.
 - **Icons**: a lightning bolt (LEDs `74, 76`) above the top digit
   cluster, and a "juice drop" icon (LEDs `60, 61, 112, 113`) below the
   bottom cluster -- small, tightly-packed, individually addressable

@@ -1,0 +1,14 @@
+[Unit]
+Description=Geekbar LED panel state daemon
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/timerled daemon
+Restart=on-failure
+RestartSec=2
+# Uncomment and adjust if your board doesn't enumerate as /dev/ttyUSB0.
+# Environment=TIMERLED_PORT=/dev/ttyUSB0
+
+[Install]
+WantedBy=default.target
