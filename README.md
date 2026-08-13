@@ -1,5 +1,11 @@
 # Geekbar Pulse X LED Driver
 
+![demo](media/demo.gif)
+
+Full-length video with audio: [`media/demo.mp4`](media/demo.mp4)
+(the gif above is a trimmed, silent 15s preview -- generated with
+`scripts/demo.py`, see [Demo](#demo) below).
+
 Reverse-engineered driver for the LED light-guide film salvaged from a
 Geekbar Pulse X disposable vape. The film is driven by a `PLS916H` LED
 matrix controller (8-bit dimming, 144 individually addressable channels)
@@ -36,6 +42,18 @@ pio run -t upload --upload-port /dev/ttyUSB0
 Named LED groups (constellations, digit slots, ring, stray stars) live in
 `include/led_groups.h`, derived from `led_map.json` -- see [LED index ->
 physical position mapping](#led-index---physical-position-mapping) below.
+
+## Demo
+
+`scripts/demo.py` drives the board through a curated sequence covering
+everything above at once -- constellations tracing in, a bounce with the
+background stars twinkling underneath, the ring's progress-fill and
+loading-sweep, a digit readout, and a finish blink. It's what produced
+the video/gif at the top of this README.
+
+```
+.venv/bin/python3 scripts/demo.py --port /dev/ttyUSB0
+```
 
 ## Serial protocol
 
