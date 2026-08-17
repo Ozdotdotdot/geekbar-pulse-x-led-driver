@@ -21,7 +21,7 @@ Protocol reverse-engineering credit:
 Every one of the 144 addressable indices, mapped to its physical position
 on the film:
 
-![LED map](reference_map_annotated.png)
+![LED map](led_map_on_photo.png)
 
 ## Wiring
 
