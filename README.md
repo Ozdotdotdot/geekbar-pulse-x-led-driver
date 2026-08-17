@@ -16,41 +16,12 @@ Protocol reverse-engineering credit:
 - https://gist.github.com/The5thZone/fcb294b999651d99634e3481fc5ee4ed
 - https://github.com/schlae/vapere
 
-## This project's contribution: automated physical LED mapping
+## LED map
 
-The prior work above got a logic analyzer on the film's clock/data lines
-and worked out the `PLS916H` command structure -- that's what makes it
-possible to address any of the 144 LEDs individually at all. What was
-still missing was knowing *which* of those 144 channel indices lights up
-*where* on the physical film -- without that, you can turn LEDs on and off,
-but you can't build a deliberate animation that traces a specific
-constellation line or fills a specific digit segment.
+Every one of the 144 addressable indices, mapped to its physical position
+on the film:
 
-Getting that mapping by eye (photograph each index, squint, guess
-coordinates) doesn't scale to 144 channels. Instead, `map_leds.py` drives
-it end to end with a webcam pointed straight down at the film in a dark
-room:
-
-1. Step through indices `0..143` one at a time, sending the single-LED-on
-   command (`L <index>`) for each.
-2. On every index, grab a frame and threshold it for the single brightest
-   blob -- that blob's centroid is that index's physical `(x, y)` position.
-3. Repeat for all 144, and write out `led_map.json`: index -> pixel
-   centroid.
-
-144 photos later, that point cloud gets overlaid on a reference photo of
-the actual film (`led_map_on_photo.png`) and hand-annotated
-(`reference_map_annotated.png`) to identify the named groups -- the two
-constellations, the digit clusters, the ring, the X icon, the stray
-background stars -- that `include/led_groups.h` and `internal/leds/groups.go`
-are built from. That's what turns "144 independently addressable dimmable
-channels" into "a ring that can progress-fill clockwise" and "a digit
-slot that can render `0-9` in 7-segment" -- the mapping is the missing
-piece between the reverse-engineered protocol and anything that looks
-intentional on screen.
-
-See [LED index -> physical position mapping](#led-index---physical-position-mapping)
-below for how to run it yourself.
+![LED map](reference_map_annotated.png)
 
 ## Wiring
 
