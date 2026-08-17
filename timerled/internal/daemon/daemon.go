@@ -32,6 +32,14 @@ type Daemon struct {
 	musicIdleSince time.Time
 	musicSub       musicSub
 
+	// Dashboard-adjustable brightness settings, defaulting to the values the
+	// panel always used before these were exposed. Only touched by the main
+	// loop goroutine (via handleCommand), same as every other Daemon field.
+	starMinBrightness       uint8
+	starMaxBrightness       uint8
+	constellationBrightness uint8
+	clockBrightness         uint8
+
 	// justFinishedPomodoro makes the very next Music/Regular entry a soft
 	// fade-up from the dark panel the finish blink left behind, instead of
 	// the full clear-and-replay reveal -- the blink is already the "big
@@ -55,15 +63,19 @@ func New(portName string, baud int, socketPath string) (*Daemon, error) {
 		return nil, err
 	}
 	return &Daemon{
-		panel:                NewPanel(port),
-		portName:             portName,
-		baud:                 baud,
-		socketPath:           socketPath,
-		lastMode:             modeUnset,
-		lastRenderedClockKey: -1,
-		lastRenderedHour:     -1,
-		cmds:                 make(chan cmdRequest),
-		resumed:              make(chan *Panel),
+		panel:                   NewPanel(port),
+		portName:                portName,
+		baud:                    baud,
+		socketPath:              socketPath,
+		lastMode:                modeUnset,
+		lastRenderedClockKey:    -1,
+		lastRenderedHour:        -1,
+		starMinBrightness:       starTwinkleMinBrightness,
+		starMaxBrightness:       starTwinkleMaxBrightness,
+		constellationBrightness: constellationFullBrightness,
+		clockBrightness:         160,
+		cmds:                    make(chan cmdRequest),
+		resumed:                 make(chan *Panel),
 	}, nil
 }
 
@@ -142,6 +154,14 @@ func (d *Daemon) handleSuspend() {
 	d.sleeping = true
 	d.panel.DisarmTwinkle()
 	d.panel.Clear()
+	// The USB device is about to lose power, but our fd on it stays open
+	// (and the kernel tty layer keeps treating it as in-use) until we
+	// close it ourselves -- if we don't, handleResume's reopen of the same
+	// device node fails with EBUSY, because our own stale pre-suspend fd
+	// is still referencing it.
+	if err := d.panel.Close(); err != nil {
+		log.Printf("error closing serial port before suspend: %v", err)
+	}
 }
 
 func (d *Daemon) handleResume() {
@@ -248,8 +268,8 @@ func (d *Daemon) tickMusicOrRegular(now time.Time) {
 		d.lastMode = ModeMusic
 		d.musicSub = musicSubPlaying
 		d.renderMusicProgress(status)
-		d.maybeHourBounce(now, constellationFullBrightness)
-		d.renderClock(now, 160)
+		d.maybeHourBounce(now, d.constellationBrightness)
+		d.renderClock(now, d.clockBrightness)
 		return
 	}
 
@@ -267,7 +287,7 @@ func (d *Daemon) tickMusicOrRegular(now time.Time) {
 			d.lastMode = ModeMusic
 			d.musicSub = musicSubPaused
 			d.maybeHourBounce(now, constellationPausedBrightness)
-			d.renderClock(now, 160)
+			d.renderClock(now, d.clockBrightness)
 			return
 		}
 	}
@@ -284,8 +304,8 @@ func (d *Daemon) tickMusicOrRegular(now time.Time) {
 	} else {
 		d.enterIfNeeded(ModeRegular, d.enterRegular)
 	}
-	d.maybeHourBounce(now, constellationFullBrightness)
-	d.renderClock(now, 160)
+	d.maybeHourBounce(now, d.constellationBrightness)
+	d.renderClock(now, d.clockBrightness)
 }
 
 func (d *Daemon) enterIfNeeded(mode Mode, enter func() error) bool {
@@ -319,10 +339,10 @@ func (d *Daemon) enterRegular() error {
 	if err := d.panel.Clear(); err != nil {
 		return err
 	}
-	if err := d.panel.TraceBreatheReveal("both_constellations"); err != nil {
+	if err := d.panel.TraceBreatheReveal("both_constellations", d.constellationBrightness); err != nil {
 		return err
 	}
-	return d.panel.ArmTwinkle("stray_stars", starTwinkleMinBrightness, starTwinkleMaxBrightness)
+	return d.panel.ArmTwinkle("stray_stars", d.starMinBrightness, d.starMaxBrightness)
 }
 
 // enterRegularSoft is the post-pomodoro version of enterRegular: the panel
@@ -331,11 +351,11 @@ func (d *Daemon) enterRegular() error {
 // replaying the whole trace-and-breathe reveal on top of a blink that
 // already had its moment.
 func (d *Daemon) enterRegularSoft() error {
-	if err := d.panel.EaseGroupFromCurrent("both_constellations", constellationFullBrightness,
+	if err := d.panel.EaseGroupFromCurrent("both_constellations", d.constellationBrightness,
 		constellationEaseMs); err != nil {
 		return err
 	}
-	return d.panel.ArmTwinkle("stray_stars", starTwinkleMinBrightness, starTwinkleMaxBrightness)
+	return d.panel.ArmTwinkle("stray_stars", d.starMinBrightness, d.starMaxBrightness)
 }
 
 func (d *Daemon) enterMusicPlaying() error {
@@ -343,10 +363,10 @@ func (d *Daemon) enterMusicPlaying() error {
 	if err := d.panel.Clear(); err != nil {
 		return err
 	}
-	if err := d.panel.TraceBreatheReveal("both_constellations"); err != nil {
+	if err := d.panel.TraceBreatheReveal("both_constellations", d.constellationBrightness); err != nil {
 		return err
 	}
-	if err := d.panel.ArmTwinkle("stray_stars", starTwinkleMinBrightness, starTwinkleMaxBrightness); err != nil {
+	if err := d.panel.ArmTwinkle("stray_stars", d.starMinBrightness, d.starMaxBrightness); err != nil {
 		return err
 	}
 	return d.panel.RingProgress(0, 220)
@@ -356,11 +376,11 @@ func (d *Daemon) enterMusicPlaying() error {
 // the panel is already dark, so this just eases the constellation up and
 // re-arms the twinkle instead of replaying the whole reveal.
 func (d *Daemon) enterMusicPlayingSoft() error {
-	if err := d.panel.EaseGroupFromCurrent("both_constellations", constellationFullBrightness,
+	if err := d.panel.EaseGroupFromCurrent("both_constellations", d.constellationBrightness,
 		constellationEaseMs); err != nil {
 		return err
 	}
-	if err := d.panel.ArmTwinkle("stray_stars", starTwinkleMinBrightness, starTwinkleMaxBrightness); err != nil {
+	if err := d.panel.ArmTwinkle("stray_stars", d.starMinBrightness, d.starMaxBrightness); err != nil {
 		return err
 	}
 	return d.panel.RingProgress(0, 220)
@@ -384,7 +404,7 @@ func (d *Daemon) enterMusicPaused() error {
 	if err := d.panel.EaseGroupFromCurrent("stray_stars", 0, starFadeMs); err != nil {
 		return err
 	}
-	return d.panel.EaseGroup("both_constellations", constellationFullBrightness,
+	return d.panel.EaseGroup("both_constellations", d.constellationBrightness,
 		constellationPausedBrightness, constellationEaseMs)
 }
 
@@ -396,10 +416,10 @@ func (d *Daemon) enterMusicResume() error {
 		return err
 	}
 	if err := d.panel.EaseGroup("both_constellations", constellationPausedBrightness,
-		constellationFullBrightness, constellationEaseMs); err != nil {
+		d.constellationBrightness, constellationEaseMs); err != nil {
 		return err
 	}
-	return d.panel.ArmTwinkle("stray_stars", starTwinkleMinBrightness, starTwinkleMaxBrightness)
+	return d.panel.ArmTwinkle("stray_stars", d.starMinBrightness, d.starMaxBrightness)
 }
 
 func (d *Daemon) finishPomodoro() {

@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Geekbar Panel</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d14;
+    --card: #151826;
+    --border: #262b40;
+    --text: #e8e9f0;
+    --dim: #8a8fa8;
+    --accent: #7c9cff;
+    --accent-dim: #3a4470;
+    --danger: #ff6b6b;
+    --ok: #5fd991;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 1.5rem;
+  }
+  h1 {
+    font-size: 1.25rem;
+    margin: 0 0 0.25rem;
+    font-weight: 600;
+  }
+  .status-line {
+    color: var(--dim);
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+  }
+  .status-line strong { color: var(--accent); }
+  main {
+    max-width: 640px;
+    margin: 0 auto;
+    display: grid;
+    gap: 1rem;
+  }
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+  }
+  section h2 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--dim);
+    margin: 0 0 0.9rem;
+    font-weight: 600;
+  }
+  .slider-row {
+    display: grid;
+    grid-template-columns: 110px 1fr 44px;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+  .slider-row:last-child { margin-bottom: 0; }
+  .slider-row label { font-size: 0.9rem; }
+  .slider-row output { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+  .btn-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  button {
+    background: var(--accent-dim);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.55rem 0.9rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:active { transform: translateY(1px); }
+  button.primary { background: var(--accent); color: #0b0d14; font-weight: 600; }
+  button.danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+  .pomo-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .pomo-row input[type="text"] {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 0.55rem 0.7rem;
+    width: 6.5rem;
+    font-size: 0.9rem;
+  }
+  #toast {
+    position: fixed;
+    bottom: 1.25rem;
+    left: 50%;
+    transform: translateX(-50%) translateY(10px);
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.error { color: var(--danger); }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Geekbar Panel</h1>
+    <div class="status-line">mode: <strong id="mode">--</strong><span id="pomoRemaining"></span></div>
+  </div>
+
+  <section>
+    <h2>Brightness</h2>
+    <div class="slider-row">
+      <label for="stars">Stray stars</label>
+      <input type="range" id="stars" min="0" max="255" value="45">
+      <output id="starsVal">45</output>
+    </div>
+    <div class="slider-row">
+      <label for="constellation">Constellations</label>
+      <input type="range" id="constellation" min="0" max="255" value="230">
+      <output id="constellationVal">230</output>
+    </div>
+    <div class="slider-row">
+      <label for="clock">Clock digits</label>
+      <input type="range" id="clock" min="0" max="255" value="160">
+      <output id="clockVal">160</output>
+    </div>
+  </section>
+
+  <section>
+    <h2>Animations</h2>
+    <div class="btn-row">
+      <button data-trigger="reveal">Reveal</button>
+      <button data-trigger="bounce">Bounce</button>
+      <button data-trigger="sweep">Ring sweep</button>
+      <button data-trigger="blink">Blink</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Pomodoro</h2>
+    <div class="pomo-row">
+      <input type="text" id="pomoDuration" value="25m" placeholder="25m">
+      <button class="primary" id="pomoStart">Start</button>
+      <button id="pomoCancel">Cancel</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Panel</h2>
+    <div class="btn-row">
+      <button id="btnOff" class="danger">Off</button>
+      <button id="btnNormal">Resume automatic</button>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const toast = document.getElementById('toast');
+function showToast(msg, isError) {
+  toast.textContent = msg;
+  toast.className = isError ? 'show error' : 'show';
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => { toast.className = ''; }, 2200);
+}
+
+async function post(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showToast(data.error || ('request failed: ' + res.status), true);
+    throw new Error(data.error || res.status);
+  }
+  return data;
+}
+
+async function refreshStatus() {
+  try {
+    const res = await fetch('/api/status');
+    const s = await res.json();
+    document.getElementById('mode').textContent = s.mode;
+    document.getElementById('pomoRemaining').textContent =
+      s.pomodoroRemaining ? ' -- ' + s.pomodoroRemaining + ' left' : '';
+    for (const target of ['stars', 'constellation', 'clock']) {
+      if (!sliderDirty[target] && s[target] !== undefined) {
+        document.getElementById(target).value = s[target];
+        document.getElementById(target + 'Val').textContent = s[target];
+      }
+    }
+  } catch (e) {
+    // Transient fetch failures aren't worth a toast every poll.
+  }
+}
+
+const sliderDirty = { stars: false, constellation: false, clock: false };
+let sliderDebounce = {};
+for (const target of ['stars', 'constellation', 'clock']) {
+  const el = document.getElementById(target);
+  const out = document.getElementById(target + 'Val');
+  el.addEventListener('input', () => {
+    out.textContent = el.value;
+    sliderDirty[target] = true;
+    clearTimeout(sliderDebounce[target]);
+    sliderDebounce[target] = setTimeout(async () => {
+      try {
+        await post('/api/brightness', { target, value: Number(el.value) });
+      } finally {
+        sliderDirty[target] = false;
+      }
+    }, 120);
+  });
+}
+
+for (const btn of document.querySelectorAll('[data-trigger]')) {
+  btn.addEventListener('click', () => post('/api/trigger', { name: btn.dataset.trigger }));
+}
+
+document.getElementById('pomoStart').addEventListener('click', () => {
+  const duration = document.getElementById('pomoDuration').value.trim();
+  if (!duration) return;
+  post('/api/pomodoro', { duration }).then(() => showToast('pomodoro started')).catch(() => {});
+});
+document.getElementById('pomoCancel').addEventListener('click', () =>
+  post('/api/cancel').then(() => showToast('pomodoro cancelled')).catch(() => {}));
+document.getElementById('btnOff').addEventListener('click', () =>
+  post('/api/off').then(() => showToast('panel off')).catch(() => {}));
+document.getElementById('btnNormal').addEventListener('click', () =>
+  post('/api/normal').then(() => showToast('resumed automatic')).catch(() => {}));
+
+refreshStatus();
+setInterval(refreshStatus, 3000);
+</script>
+</body>
+</html>

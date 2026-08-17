@@ -113,6 +113,32 @@ systemctl --user enable --now timerled.service
 indices from `led_groups.h`/`main.cpp` -- keep them in sync if the physical
 mapping ever changes.
 
+### Web dashboard
+
+The daemon can optionally serve a small dashboard for controlling the panel
+from a browser -- brightness sliders (stray stars, constellations, clock
+digits), one-shot animation triggers (reveal / bounce / ring sweep / blink),
+pomodoro start/cancel, and off/resume-automatic. It talks to the daemon's
+main loop the same way the CLI does (through the same request channel), so
+it's just another thin client, not a second thing driving the serial port.
+
+Enable it by setting `TIMERLED_HTTP_ADDR` before starting the daemon (unset
+= dashboard disabled):
+
+```
+TIMERLED_HTTP_ADDR=:8420 timerled daemon
+```
+
+or uncomment the `Environment=TIMERLED_HTTP_ADDR=...` line in
+`timerled.service`. `:8420` binds all interfaces, so it's reachable from any
+device on the LAN at `http://<host-ip>:8420` -- there's no authentication,
+so only enable it on a network you trust.
+
+Brightness changes apply live (an on-device fade, not waiting for the next
+mode transition); animation triggers are fire-and-forget and don't change
+the automatic Regular/Music/Pomodoro state, so the next tick keeps
+rendering normally on top of them.
+
 ## Serial protocol
 
 115200 baud, one command per line, newline-terminated. The firmware

@@ -67,6 +67,14 @@ func runDaemon() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if addr := os.Getenv("TIMERLED_HTTP_ADDR"); addr != "" {
+		go func() {
+			if err := d.ServeHTTP(ctx, addr); err != nil {
+				fmt.Fprintf(os.Stderr, "timerled: dashboard server: %v\n", err)
+			}
+		}()
+	}
+
 	if err := d.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "timerled: %v\n", err)
 		os.Exit(1)

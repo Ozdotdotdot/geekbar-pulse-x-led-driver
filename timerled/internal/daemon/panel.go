@@ -44,12 +44,17 @@ func (p *Panel) send(line string) error {
 	return p.port.Send(line, sendTimeout)
 }
 
+// Close releases the underlying serial port.
+func (p *Panel) Close() error {
+	return p.port.Close()
+}
+
 func (p *Panel) Clear() error { return p.send("C") }
 
 // TraceBreatheReveal is the "B" trace-and-breathe reveal used both for
 // entering Regular and for a fresh track in Music mode.
-func (p *Panel) TraceBreatheReveal(group string) error {
-	return p.send(fmt.Sprintf("B 7 12 450 450 %d %s", constellationFullBrightness, group))
+func (p *Panel) TraceBreatheReveal(group string, peakBrightness uint8) error {
+	return p.send(fmt.Sprintf("B 7 12 450 450 %d %s", peakBrightness, group))
 }
 
 // HourBounce is the 5x bounce-and-settle that replays on the hour, ending
@@ -82,6 +87,12 @@ func (p *Panel) EaseGroup(group string, fromB, toB uint8, ms int) error {
 // cycle), so nothing snaps to a uniform brightness before the fade starts.
 func (p *Panel) EaseGroupFromCurrent(group string, toB uint8, ms int) error {
 	return p.send(fmt.Sprintf("V %d %d %s", toB, ms, group))
+}
+
+// RingSweep is a one-shot "S" radar/second-hand sweep around the ring --
+// used for the dashboard's fire-and-forget "sweep" trigger.
+func (p *Panel) RingSweep(ms int, brightness uint8, decayPercent int, laps int) error {
+	return p.send(fmt.Sprintf("S %d %d %d %d", ms, brightness, decayPercent, laps))
 }
 
 // RingProgress sets 0-14 ring LEDs filled at the given brightness.

@@ -9,6 +9,9 @@ Restart=on-failure
 RestartSec=2
 # Uncomment and adjust if your board doesn't enumerate as /dev/ttyUSB0.
 # Environment=TIMERLED_PORT=/dev/ttyUSB0
+# Serves the web dashboard on all interfaces at the given port -- reachable
+# from any device on the LAN, unauthenticated. Leave unset to disable it.
+Environment=TIMERLED_HTTP_ADDR=:8420
 
 [Install]
 WantedBy=default.target

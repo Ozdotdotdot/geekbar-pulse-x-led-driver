@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -68,8 +69,22 @@ func parseRequest(line string) (cmdRequest, error) {
 			return cmdRequest{}, fmt.Errorf("bad duration %q: %w", fields[1], err)
 		}
 		return cmdRequest{verb: verbPomodoro, dur: dur, reply: reply}, nil
-	case verbCancel, verbOff, verbNormal, verbStatus:
+	case verbCancel, verbOff, verbNormal, verbStatus, verbSnapshot:
 		return cmdRequest{verb: cmdVerb(fields[0]), reply: reply}, nil
+	case verbBrightness:
+		if len(fields) != 3 {
+			return cmdRequest{}, fmt.Errorf("usage: brightness <stars|constellation|clock> <0-255>")
+		}
+		val, err := strconv.Atoi(fields[2])
+		if err != nil || val < 0 || val > 255 {
+			return cmdRequest{}, fmt.Errorf("bad brightness value %q (want 0-255)", fields[2])
+		}
+		return cmdRequest{verb: verbBrightness, target: fields[1], value: uint8(val), reply: reply}, nil
+	case verbTrigger:
+		if len(fields) != 2 {
+			return cmdRequest{}, fmt.Errorf("usage: trigger <bounce|reveal|sweep|blink>")
+		}
+		return cmdRequest{verb: verbTrigger, trigger: fields[1], reply: reply}, nil
 	default:
 		return cmdRequest{}, fmt.Errorf("unknown command %q", fields[0])
 	}
